@@ -12,6 +12,7 @@ package dque
 import (
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gofrs/flock"
 	"github.com/pkg/errors"
@@ -60,7 +61,7 @@ type DQue struct {
 
 	mutex sync.Mutex
 
-	emptyCond *sync.Cond
+	emptyCond *Cond
 
 	turbo bool
 }
@@ -91,7 +92,7 @@ func New(name string, dirPath string, itemsPerSegment int, builder func() interf
 	q.fullPath = fullPath
 	q.config.ItemsPerSegment = itemsPerSegment
 	q.builder = builder
-	q.emptyCond = sync.NewCond(&q.mutex)
+	q.emptyCond = NewCond(&q.mutex)
 
 	if err := q.lock(); err != nil {
 		return nil, err
@@ -130,7 +131,7 @@ func Open(name string, dirPath string, itemsPerSegment int, builder func() inter
 	q.fullPath = fullPath
 	q.config.ItemsPerSegment = itemsPerSegment
 	q.builder = builder
-	q.emptyCond = sync.NewCond(&q.mutex)
+	q.emptyCond = NewCond(&q.mutex)
 
 	if err := q.lock(); err != nil {
 		return nil, err
@@ -365,6 +366,25 @@ func (q *DQue) PeekBlock() (interface{}, error) {
 			q.emptyCond.Wait()
 			// Wait() atomically unlocks mutexEmptyCond and suspends execution of the calling goroutine.
 			// Receiving the signal does not guarantee an item is available, let's loop and check again.
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		return obj, nil
+	}
+}
+
+// DequeueDeadline behaves similar to Dequeue, but is a blocking call until an item is available or deadline exceeded.
+func (q *DQue) DequeueDeadline(deadline time.Time) (interface{}, error) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	for {
+		obj, err := q.dequeueLocked()
+		if err == ErrEmpty {
+			err = q.emptyCond.WaitDeadline(deadline)
+			if err != nil {
+				return nil, err
+			}
 			continue
 		} else if err != nil {
 			return nil, err

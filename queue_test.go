@@ -589,6 +589,37 @@ func TestQueue_BlockingAggresive(t *testing.T) {
 	}
 }
 
+func TestQueue_DeadlineBehaviour(t *testing.T) {
+	qName := "testBlockingDeadline"
+	if err := os.RemoveAll(qName); err != nil {
+		t.Fatal("Error removing queue directory:", err)
+	}
+
+	q := newQ(t, qName, false)
+
+	q.Enqueue(&item2{0})
+	x, err := q.DequeueDeadline(time.Now().Add(-1 * time.Second))
+	assert(t, err == nil, "Expected no error")
+	assert(t, x.(*item2).Id == 0, "Expected Msg with id == 0")
+
+	go func() {
+		time.Sleep(1 * time.Second)
+		q.Enqueue(&item2{1})
+	}()
+	x, err = q.DequeueDeadline(time.Now().Add(2 * time.Second))
+	assert(t, err == nil, "Expected no error")
+	assert(t, x.(*item2).Id == 1, "Expected Msg with id == 1")
+
+	_, err = q.DequeueDeadline(time.Now())
+	assert(t, err == os.ErrDeadlineExceeded, "Expected os.ErrDeadlineExceeded")
+
+	q.Close()
+	// Cleanup
+	if err := os.RemoveAll(qName); err != nil {
+		t.Fatal("Error removing queue directory:", err)
+	}
+}
+
 func newOrOpenQ(t *testing.T, qName string, turbo bool) *dque.DQue {
 	// Create a new segment with segment size of 3
 	q, err := dque.NewOrOpen(qName, ".", 3, item2Builder)

@@ -90,17 +90,20 @@ func benchmarkDequeue(b *testing.B, turbo bool) {
 	if err != nil {
 		b.Fatal("Error creating new dque", err)
 	}
-	var iterations int = 5000
+	// var iterations int = 5000
 	if turbo {
 		_ = q.TurboOn()
-		iterations = iterations * 10
+		// iterations = iterations * 10
 	}
 
-	for i := 0; i < iterations; i++ {
+	for i := 0; i < b.N; i++ {
 		err := q.Enqueue(item3{"Sorta, kind of, a Big Long Name", i, true})
 		if err != nil {
 			b.Fatal("Error enqueuing to dque:", err)
 		}
+	}
+	if turbo {
+		q.TurboSync()
 	}
 	b.StartTimer()
 
