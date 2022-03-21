@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -614,6 +615,76 @@ func TestQueue_DeadlineBehaviour(t *testing.T) {
 	assert(t, err == os.ErrDeadlineExceeded, "Expected os.ErrDeadlineExceeded")
 
 	q.Close()
+	// Cleanup
+	if err := os.RemoveAll(qName); err != nil {
+		t.Fatal("Error removing queue directory:", err)
+	}
+}
+
+func TestQueue_DeadlineAggresive(t *testing.T) {
+	rand.Seed(0) // ensure we have reproducible sleeps
+
+	qName := "testDeadlineAggresive"
+	if err := os.RemoveAll(qName); err != nil {
+		t.Fatal("Error removing queue directory:", err)
+	}
+
+	q := newQ(t, qName, true)
+
+	numProducers := 5
+	numItemsPerProducer := 50
+	numConsumers := 25
+
+	done := make(chan bool)
+	var wg sync.WaitGroup
+	wg.Add(numProducers * numItemsPerProducer)
+
+	go func() {
+		wg.Wait()
+		q.Close()
+		done <- true
+	}()
+
+	// producers
+	for p := 0; p < numProducers; p++ {
+		go func(producer int) {
+			for i := 0; i < numItemsPerProducer; i++ {
+				s := rand.Intn(150)
+				time.Sleep(time.Duration(s) * time.Millisecond)
+				err := q.Enqueue(&item2{i})
+				assert(t, err == nil, "Expected no error", err)
+				fmt.Println("Enqueued item", i, "by producer", producer, "after sleeping", s)
+			}
+		}(p)
+	}
+
+	// consumers
+	var deadlineExceededCount int32 = 0
+	for c := 0; c < numConsumers; c++ {
+		go func(consumer int) {
+			for {
+				x, err := q.DequeueDeadline(time.Now().Add(time.Duration(rand.Int()) * time.Millisecond))
+				if err == dque.ErrQueueClosed {
+					return
+				}
+				if err == os.ErrDeadlineExceeded {
+					atomic.AddInt32(&deadlineExceededCount, 1)
+					continue
+				}
+				assert(t, err == nil, "Expected no error")
+				fmt.Println("Dequeued item", x, "by consumer", consumer)
+				wg.Done()
+			}
+		}(c)
+	}
+	timeout := time.After(10 * time.Second)
+	select {
+	case <-timeout:
+		t.Fatal("Test didn't finish in time")
+	case <-done:
+		t.Logf("deadline exceeded: %d", deadlineExceededCount)
+	}
+
 	// Cleanup
 	if err := os.RemoveAll(qName); err != nil {
 		t.Fatal("Error removing queue directory:", err)
